@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '\r\n' < version.txt)"
+          if [[ -z "$version" ]]; then
+            echo "version.txt is empty" >&2
+            exit 1
+          fi
+
+          changed="false"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            changed="true"
+          else
+            before="${{ github.event.before }}"
+            if [[ -z "$before" || "$before" == "0000000000000000000000000000000000000000" ]]; then
+              changed="true"
+            elif git cat-file -e "${before}:version.txt" 2>/dev/null; then
+              previous="$(git show "${before}:version.txt" | tr -d '\r\n')"
+              if [[ "$previous" != "$version" ]]; then
+                changed="true"
+              fi
+            else
+              changed="true"
+            fi
+          fi
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: detect-version
+    if: needs.detect-version.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            preset: x64-release
+            arch: x64
+            artifact_name: YSMParser-windows-x64
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-windows-x64
+            binary_relpath: out/install/x64-release/YSMParser.exe
+          - os: windows-2022
+            preset: x86-release
+            arch: x86
+            artifact_name: YSMParser-windows-x86
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-windows-x86
+            binary_relpath: out/install/x86-release/YSMParser.exe
+          - os: ubuntu-24.04
+            preset: linux-release
+            arch: x64
+            artifact_name: YSMParser-linux-x64
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-linux-x64
+            binary_relpath: out/install/linux-release/YSMParser
+          - os: macos-14
+            preset: macos-release
+            arch: arm64
+            artifact_name: YSMParser-macos-arm64
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-macos-arm64
+            binary_relpath: out/install/macos-release/YSMParser
+          - os: ubuntu-24.04
+            preset: wasm-release
+            arch: wasm32
+            artifact_name: YSMParser-wasm-node
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-wasm-node
+            binary_relpath: out/install/wasm-release/YSMParser.js
+            install_dir: out/install/wasm-release
+            package_web_frontend: 'false'
+          - os: ubuntu-24.04
+            preset: wasm-web-release
+            arch: wasm32
+            artifact_name: YSMParser-wasm-web
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-wasm-web
+            binary_relpath: out/install/wasm-web-release/YSMParser.js
+            install_dir: out/install/wasm-web-release
+            package_web_frontend: 'true'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup Emscripten
+        if: matrix.arch == 'wasm32'
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Setup MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Install
+        run: cmake --install out/build/${{ matrix.preset }} --prefix out/install/${{ matrix.preset }}
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          cp "${{ matrix.binary_relpath }}" package/
+          if [[ "${{ matrix.arch }}" == "wasm32" ]]; then
+            wasm_file="$(find "${{ matrix.install_dir }}" -maxdepth 1 -type f -name '*.wasm' | head -n 1)"
+            if [[ -z "$wasm_file" ]]; then
+              echo "No .wasm file found in ${{ matrix.install_dir }}" >&2
+              exit 1
+            fi
+            cp "$wasm_file" package/
+          fi
+          if [[ "${{ matrix.package_web_frontend }}" == "true" ]]; then
+            cp web/index.html package/
+            cp web/app.js package/
+          fi
+          cp LICENSE.txt package/
+          if [[ -f README.md ]]; then
+            cp README.md package/
+          fi
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            powershell -NoProfile -Command "Compress-Archive -Path package\\* -DestinationPath '${{ matrix.archive_name }}.zip'"
+          else
+            tar -C package -czf "${{ matrix.archive_name }}.tar.gz" .
+          fi
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.archive_name }}.zip
+            ${{ matrix.archive_name }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs:
+      - detect-version
+      - build
+    if: needs.detect-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.detect-version.outputs.tag }}"
+          title="YSMParser ${{ needs.detect-version.outputs.version }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --notes "Automated build for $tag"
+          else
+            gh release create "$tag" --title "$title" --notes "Automated build for $tag"
+          fi
+
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 | \
+            xargs -0 -I{} gh release upload "$tag" "{}" --clobber
