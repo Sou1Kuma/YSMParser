@@ -82,3 +82,64 @@ install(TARGETS YSMParser
 if (YSM_TARGET_WASM)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/YSMParser.wasm" DESTINATION . OPTIONAL)
 endif()
+
+# --- JNI Shared Library ---
+if(YSM_TARGET_JNI)
+  add_library(YSMParserJNI SHARED
+    "parsers/YSMParserJNI.cpp"
+    "parsers/YSMParser.hpp"
+    "parsers/YSMParser.cpp"
+    "parsers/v3/YSMParserV3.hpp"
+    "parsers/v3/YSMParserV3.cpp"
+    "parsers/YSMParserV2.hpp"
+    "parsers/YSMParserV2.cpp"
+    "parsers/YSMParserV1.cpp"
+    "parsers/YSMParserV1.hpp"
+    "parsers/BufferReader.hpp"
+    "parsers/exceptions/ParserException.hpp"
+    "algorithms/CryptoAlgorithms.hpp"
+    "algorithms/CryptoAlgorithms.cpp"
+    "algorithms/NativeAlgorithmsJNI.cpp"
+    "parsers/v3/PlayerTextureCollector.hpp"
+    "parsers/v3/YSGPHeaderParser.hpp"
+    "platform/PlatformCompat.hpp"
+  )
+
+  if(CMAKE_VERSION VERSION_GREATER 3.12)
+    set_property(TARGET YSMParserJNI PROPERTY CXX_STANDARD 20)
+  endif()
+
+  target_compile_definitions(YSMParserJNI PRIVATE
+    YSM_PARSER_VERSION="${PROJECT_VERSION}"
+  )
+
+  if(MSVC)
+    target_compile_definitions(YSMParserJNI PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+
+  target_include_directories(YSMParserJNI PRIVATE ${JNI_INCLUDE_DIRS})
+
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/zstd/lib")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/cityhash/src")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/xchacha20/src")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/AES/src")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/md5")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/base64-cpp")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/zlib")
+  target_include_directories(YSMParserJNI PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../external/json")
+
+  target_link_libraries(YSMParserJNI PRIVATE cityhash libzstd_static xchacha20 AES md5 base64 zlibstatic fpng)
+
+  if(WIN32)
+    set_target_properties(YSMParserJNI PROPERTIES PREFIX "" SUFFIX ".dll")
+  elseif(APPLE)
+    set_target_properties(YSMParserJNI PROPERTIES PREFIX "lib" SUFFIX ".dylib")
+  else()
+    set_target_properties(YSMParserJNI PROPERTIES PREFIX "lib" SUFFIX ".so")
+  endif()
+
+  install(TARGETS YSMParserJNI
+    LIBRARY DESTINATION .
+    RUNTIME DESTINATION .
+  )
+endif()

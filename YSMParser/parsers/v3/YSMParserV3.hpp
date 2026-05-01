@@ -5,7 +5,7 @@
 #include <string>
 #include <array>
 #include <unordered_map>
-
+#include <json.hpp>
 struct BufferReader;
 class YSMParserV3 : public YSMParser {
 	friend void testServerDecrypt();
@@ -24,6 +24,7 @@ private:
 
 	std::vector<uint8_t> ParseModels(BufferReader& reader);
 	void ParseYSMJson(BufferReader& reader);
+	nlohmann::ordered_json buildFilesFromParsedData();
 	void ParseLegacyYSMInfo(BufferReader& reader);
 	std::vector<uint8_t> ParseAnimations(BufferReader& reader);
 	std::vector<uint8_t> ParseSpecialImage(BufferReader& reader);
@@ -46,8 +47,8 @@ private:
 	std::vector<uint8_t> m_decrypted;
 	std::vector<uint8_t> m_decompressed;
 
-	std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> m_hashToFileMap;
 	int m_format;
+	std::unordered_map<std::string, std::string> m_subEntityCategories;
 
 	std::vector<std::pair<std::string, std::vector<uint8_t>>> m_soundFiles;
 	std::vector<std::pair<std::string, std::vector<uint8_t>>> m_functionFiles;
@@ -61,4 +62,6 @@ private:
 	std::vector<std::pair<std::string, std::vector<uint8_t>>> m_backgroundFiles;
 	std::vector<uint8_t> m_infoJsonFile;
 	std::vector<uint8_t> m_ysmJsonFile;
+
+	nlohmann::json m_metadata;
 };

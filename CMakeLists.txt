@@ -21,6 +21,19 @@ if(YSM_TARGET_WASM AND NOT YSM_WASM_ENV MATCHES "^(node|web)$")
   message(FATAL_ERROR "YSM_WASM_ENV must be either 'node' or 'web'")
 endif()
 
+option(YSM_TARGET_JNI "Build a JNI shared library for Java integration" OFF)
+
+if(YSM_TARGET_JNI)
+  if(ANDROID)
+    # Android NDK ships jni.h in its sysroot; CMake's FindJNI is unreliable here.
+    message(STATUS "Android target: using NDK sysroot JNI headers")
+  else()
+    find_package(JNI REQUIRED)
+    message(STATUS "JNI include dirs: ${JNI_INCLUDE_DIRS}")
+  endif()
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 set(YSM_ZLIB_ZCONF_HEADER "${CMAKE_SOURCE_DIR}/external/zlib/zconf.h")
 set(YSM_ZLIB_ZCONF_TEMPLATE "${CMAKE_SOURCE_DIR}/external/zlib/zconf.h.in")
 if(NOT EXISTS "${YSM_ZLIB_ZCONF_HEADER}" AND EXISTS "${YSM_ZLIB_ZCONF_TEMPLATE}")
@@ -46,6 +59,14 @@ add_subdirectory("external/cpp-base64")
 
 set(ZLIB_BUILD_STATIC ON CACHE BOOL "Build zlib static library" FORCE)
 set(ZLIB_BUILD_SHARED OFF CACHE BOOL "Disable zlib shared library build" FORCE)
+
+# zlib writes ZLIB_CONF_WRITTEN to cache after creating zconf.h.cmakein.
+# If the build tree is partially cleaned, the cache variable stays TRUE but
+# the .cmakein file is gone, causing a configure error. Force regeneration.
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/external/zlib/zconf.h.cmakein")
+  unset(ZLIB_CONF_WRITTEN CACHE)
+endif()
+
 add_subdirectory("external/zlib")
 
 add_library(fpng STATIC "external/fpng/src/fpng.cpp")

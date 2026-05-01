@@ -130,8 +130,7 @@ void YSMParserV1::parse() {
         uint32_t strSize = readBE<uint32_t>(ip + offset, 0);
         offset += sizeof(uint32_t);
 
-        std::string b64 = readStr(ip, offset, strSize);
-        std::string fileName = base64_decode(b64);
+        std::string fileName = readStr(ip, offset, strSize);
         offset += strSize;
 
         uint32_t dataLen = readBE<uint32_t>(ip + offset, 0);

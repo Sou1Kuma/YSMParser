@@ -24,7 +24,6 @@
 #include <cmath>
 
 #include <fpng.h>
-#include "YSGPHeaderParser.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
@@ -40,6 +39,36 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/**
+ * @brief 将 Windows 文件名中的非法字符替换为指定字符
+ *
+ * 非法字符包括: \ / : * ? " < > |
+ */
+static std::string sanitizeWindowsFilename(std::string filename, char replacement = '_') {
+	// 1. Windows 不允许的 9 个非法字符
+	const std::string invalidChars = "\\/:*?\"<>|";
+
+	// 2. 遍历并替换非法字符
+	for (char& c : filename) {
+		if (invalidChars.find(c) != std::string::npos) {
+			c = replacement;
+		}
+	}
+
+	// 3. 处理 Windows 的特殊限制：文件名末尾不能是空格或句点
+	// 使用 erase-remove 思想，但这里通常只是去掉尾部的无效字符
+	while (!filename.empty() && (filename.back() == ' ' || filename.back() == '.')) {
+		filename.pop_back();
+	}
+
+	// 4. 如果文件名被删空了（例如原始输入是 "..."），给一个默认名
+	if (filename.empty()) {
+		return "unnamed_file";
+	}
+
+	return filename;
+}
+
 namespace Images {
 	// 1=BMP, 2=PNG, 3=JPEG, 4=WEBP, 5=AVIF
 	inline bool isKnownImageFormat(uint32_t formatCode) {
@@ -47,14 +76,14 @@ namespace Images {
 	}
 
 	// 统一的图像元数据异常校验与输出函数
-	inline void validateImageMetadata(const std::string& name, size_t offset, uint32_t imageFormat, uint32_t unkFlag) {
+	inline static void validateImageMetadata(const std::string& name, size_t offset, uint32_t imageFormat, uint32_t unkFlag) {
 		if (!isKnownImageFormat(imageFormat) || unkFlag != 1) {
 			fprintf(stderr, "[Warning] Unexpected image metadata for '%s' at 0x%08zX: format=%u, unk_flag=%u\n",
 				name.c_str(), offset, imageFormat, unkFlag);
 		}
 	}
 
-	inline std::string indent_multiline(std::string text, const std::string& indent) {
+	inline static std::string indent_multiline(std::string text, const std::string& indent) {
 		std::string result;
 		result.reserve(text.size() + indent.size() * 4);
 
@@ -80,7 +109,7 @@ std::vector<uint8_t> YSMParserV3::getDecryptedData()
 	return m_decompressed;
 }
 
-[[nodiscard]] std::vector<uint8_t> encodeRgbaToPngMemory(const std::vector<uint8_t>& rgbaData, int w, int h) {
+[[nodiscard]] static std::vector<uint8_t> encodeRgbaToPngMemory(const std::vector<uint8_t>& rgbaData, int w, int h) {
 	if (rgbaData.size() != static_cast<size_t>(w * h * 4)) return {};
 
 	std::vector<uint8_t> pngBytes;
@@ -93,23 +122,17 @@ std::vector<uint8_t> YSMParserV3::getDecryptedData()
 }
 
 
-// 主解析器函数
-static std::unordered_map<std::string, std::pair<std::string, std::vector<std::string>>> parseYSGPHeader(const std::string& headerData, int& out_format) {
-	YSGPHeaderParser parser;
-	parser.parse(headerData);
-
-	out_format = parser.formatVersion;
-	if (parser.formatVersion == -1) {
-		throw std::runtime_error("no <format> label");
-	}
-
-	return parser.fileMap;
-}
-
-static nlohmann::ordered_json buildFilesJson(const std::string& headerData) {
-	YSGPHeaderParser parser;
-	parser.parse(headerData);
-	return parser.filesJson;
+static int extractFormatFromHeader(const std::string& headerData) {
+	size_t pos = headerData.find("<format>");
+	if (pos == std::string::npos) throw std::runtime_error("no <format> label");
+	pos += 8;
+	while (pos < headerData.size() && (headerData[pos] == ' ' || headerData[pos] == '\t'))
+		pos++;
+	size_t end = pos;
+	while (end < headerData.size() && headerData[end] >= '0' && headerData[end] <= '9')
+		end++;
+	if (end == pos) throw std::runtime_error("failed to parse <format>");
+	return std::stoi(headerData.substr(pos, end - pos));
 }
 
 // 数据结构
@@ -147,7 +170,7 @@ struct MolangPair {
 	std::array<MolangValue, 3> m;
 };
 
-std::ostream& operator<<(std::ostream& os, const MolangPair& pair) {
+static std::ostream& operator<<(std::ostream& os, const MolangPair& pair) {
 	os << "[";
 	for (size_t i = 0; i < 3; ++i) {
 		// std::visit 会根据 variant 的当前类型调用对应的操作
@@ -176,7 +199,7 @@ struct Bone {
 	std::string name;
 	std::optional<MolangPair> rotation;
 	std::optional<MolangPair> position;
-	std::optional<MolangPair> scale;   
+	std::optional<MolangPair> scale;
 };
 
 struct Keyframe {
@@ -197,7 +220,7 @@ struct AnimationClip {
 };
 
 
-std::optional<BonesKeyFrame> parseChannel(BufferReader& reader) {
+static std::optional<BonesKeyFrame> parseChannel(BufferReader& reader) {
 	uint32_t molangs = reader.readVarint();
 
 	if (molangs == 0x00) {
@@ -265,7 +288,7 @@ std::optional<BonesKeyFrame> parseChannel(BufferReader& reader) {
 }
 
 
-std::optional<Effects> parseEffect(BufferReader& reader) {
+static std::optional<Effects> parseEffect(BufferReader& reader) {
 	uint32_t header = reader.readVarint();
 
 	if (header == 0x00) {
@@ -319,24 +342,24 @@ typedef struct {
 } Face;
 
 // --- 数学辅助函数 ---
-float dot(const Vector3D& a, const Vector3D& b) {
+static float dot(const Vector3D& a, const Vector3D& b) {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-Vector3D cross(const Vector3D& a, const Vector3D& b) {
+static Vector3D cross(const Vector3D& a, const Vector3D& b) {
 	return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
 }
 
-float length(const Vector3D& a) {
+static float length(const Vector3D& a) {
 	return std::sqrt(dot(a, a));
 }
 
-Vector3D normalize(const Vector3D& a) {
+static Vector3D normalize(const Vector3D& a) {
 	float l = length(a);
 	return l > 1e-8f ? a / l : Vector3D{ 0, 0, 0 };
 }
 
-Vector3D round_vec(const Vector3D& a) {
+static Vector3D round_vec(const Vector3D& a) {
 	return { std::round(a.x), std::round(a.y), std::round(a.z) };
 }
 
@@ -355,7 +378,7 @@ struct Matrix3x3 {
 
 // 提取欧拉角
 // 对应矩阵: P' = R_z(z) * R_y(y) * R_x(x) * P
-Vector3D matrix_to_euler_xyz(const Matrix3x3& m) {
+static Vector3D matrix_to_euler_xyz(const Matrix3x3& m) {
 	// m.col[0].x -> R00
 	// m.col[0].y -> R10
 	// m.col[0].z -> R20
@@ -396,7 +419,7 @@ struct BlockbenchCube {
 	std::map<std::string, UVBox> uv;
 };
 
-void get_expected_uv_dirs(Vector3D local_normal, Vector3D& exp_U, Vector3D& exp_V) {
+static void get_expected_uv_dirs(Vector3D local_normal, Vector3D& exp_U, Vector3D& exp_V) {
 	Vector3D n = round_vec(local_normal);
 	exp_U = { 0, 0, 0 }; exp_V = { 0, 0, 0 };
 	if (n.x == -1) { exp_U = { 0, 0, 1 };  exp_V = { 0, -1, 0 }; return; }
@@ -414,11 +437,11 @@ struct FaceInfo {
 	const Face* raw_f;
 };
 
-float clean_val(float v) {
+static float clean_val(float v) {
 	return std::round(v * 10000.0f) / 10000.0f;
 }
 
-BlockbenchCube restore_blockbench_cube(const std::vector<Face>& faces_data, float original_inflate = 0.0f, int texture_size = 512) {
+static BlockbenchCube restore_blockbench_cube(const std::vector<Face>& faces_data, float original_inflate = 0.0f, int texture_size = 512) {
 	std::set<Vector3D> unique_pts;
 
 	std::vector<Vector3D> candidate_axes;
@@ -667,8 +690,6 @@ BlockbenchCube restore_blockbench_cube(const std::vector<Face>& faces_data, floa
 	return result;
 }
 
-//
-
 struct ParsedCube {
 	std::vector<Face> faces;
 };
@@ -694,9 +715,8 @@ struct ParsedModel {
 	std::string sha256;
 	ParsedDescription description;
 	std::vector<ParsedBone> bones;
-	float unk1;
-	float unk2;
-	float unk3;
+	float scaleX;
+	float scaleY;
 };
 
 
@@ -779,8 +799,8 @@ std::vector<uint8_t> YSMParserV3::ParseModels(BufferReader& reader)
 		if (reader.readVarint() != 0) throw ParserUnknownField();
 		if (reader.readVarint() != 0) throw ParserUnknownField();
 		if (reader.readVarint() != 0) throw ParserUnknownField();
-		if (reader.readVarint() != 0) throw ParserUnknownField();
-
+		// if (reader.readVarint() != 0) throw ParserUnknownField();
+		reader.readVarint(); // 这个有可能是1
 
 		// pivot: X轴反转，Y Z未反转
 		bone.pivot.x = reader.readFloat();
@@ -812,8 +832,8 @@ std::vector<uint8_t> YSMParserV3::ParseModels(BufferReader& reader)
 		model.description.visible_bounds_offset.push_back(reader.readFloat());
 	}
 
-	model.unk1 = reader.readFloat(); // 0.7
-	model.unk2 = reader.readFloat(); // 0.7
+	model.scaleX = reader.readFloat(); // 0.7
+	model.scaleY = reader.readFloat(); // 0.7
 	//if (m_format >= 4) // 这里应该是三个00
 	//{
 	//	model.unk3 = reader.readFloat(); // 0.0
@@ -919,7 +939,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 
 	json root = json::object();
 
-	json metadata = json::object();
+	m_metadata = json::object();
 	json properties = json::object();
 
 	root["spec"] = 2; // version?
@@ -931,17 +951,17 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 	}
 
 	if (m_format <= 15) {
-		printf("NUM=%d\n", reader.readVarint());
+		printf("NUM=%llu\n", reader.readVarint());
 	}
 
-	metadata["name"] = reader.readString();
+	m_metadata["name"] = reader.readString();
 
 	printf("TEST2 0x%08zX\n", reader.offset);
-	metadata["tips"] = reader.readString();
+	m_metadata["tips"] = reader.readString();
 	printf("TEST3 0x%08zX\n", reader.offset);
-	metadata["license"] = json::object();
-	metadata["license"]["type"] = reader.readString();
-	metadata["license"]["desc"] = reader.readString();
+	m_metadata["license"] = json::object();
+	m_metadata["license"]["type"] = reader.readString();
+	m_metadata["license"]["desc"] = reader.readString();
 	printf("TEST4 0x%08zX\n", reader.offset);
 	uint32_t authorsCount = reader.readVarint();
 	if (authorsCount > 0) {
@@ -967,7 +987,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			authorObj["avatar"] = "avatar/" + authorName + ".png";
 			authorsArr.push_back(authorObj);
 		}
-		metadata["authors"] = authorsArr;
+		m_metadata["authors"] = authorsArr;
 	}
 
 	// 解析 links
@@ -979,7 +999,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			std::string linkSite = reader.readString();
 			linksObj[linkName] = linkSite;
 		}
-		metadata["link"] = linksObj;
+		m_metadata["link"] = linksObj;
 	}
 
 	// 解析 properties 缩放参数
@@ -1088,7 +1108,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 
 	// bool
 	properties["free"] = (bool)reader.readVarint();
-	
+
 	if (m_format > 4) {
 		properties["render_layers_first"] = (bool)reader.readVarint();
 	}
@@ -1132,6 +1152,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			for (uint32_t j = 0; j < avatars; j++) {
 				json avatarInfo = json::object();
 				std::string avatarName = reader.readString();
+				avatarName = sanitizeWindowsFilename(avatarName);
 				avatarInfo["name"] = avatarName;
 
 				std::vector<uint8_t> data(reader.readByteSequence());
@@ -1150,11 +1171,10 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 	}
 
 	// 拼装最终结构
-	root["metadata"] = metadata;
+	root["metadata"] = m_metadata;
 	root["properties"] = properties;
 
-	std::string header_str = m_buffer.get();
-	root["files"] = buildFilesJson(header_str);
+	root["files"] = buildFilesFromParsedData();
 
 	std::string result = root.dump(4, ' ', false);
 	std::vector<uint8_t> data(result.begin(), result.end());
@@ -1196,6 +1216,139 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 
 	}
 
+}
+
+nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
+	using json = nlohmann::ordered_json;
+	json files = json::object();
+
+	std::set<std::string> subEntityModels;
+	for (const auto& [name, data] : m_modelFiles) {
+		if (name != "main" && name != "arm") {
+			subEntityModels.insert(name);
+		}
+	}
+
+	static const std::unordered_map<std::string, std::string> knownSubModels = {
+		{"arrow", "projectiles"},
+		{"trident", "projectiles"},
+		{"horse", "vehicles"},
+		{"minecart", "vehicles"},
+		{"boat", "vehicles"},
+	};
+
+	auto getCategory = [&](const std::string& modelName) -> std::string {
+		auto it = m_subEntityCategories.find(modelName);
+		if (it != m_subEntityCategories.end()) {
+			if (it->second == "vehicle") return "vehicles";
+			if (it->second == "SubEntity") {
+				auto k = knownSubModels.find(modelName);
+				if (k != knownSubModels.end()) return k->second;
+			}
+			return it->second;
+		}
+		auto k = knownSubModels.find(modelName);
+		if (k != knownSubModels.end()) return k->second;
+		return "sub_entities";
+	};
+
+	auto normalizeAnimKey = [](const std::string& name) -> std::string {
+		if (name == "fp.arm" || name == "fp_arm") return "fp_arm";
+		if (name == "iss" || name == "irons_spell_books") return "irons_spell_books";
+		return name;
+	};
+
+	auto animPathComponent = [](const std::string& key) -> std::string {
+		if (key == "fp_arm") return "fp.arm";
+		if (key == "irons_spell_books") return "iss";
+		return key;
+	};
+
+	// --- Player section ---
+	json player = json::object();
+
+	json playerModels = json::object();
+	for (const auto& [name, data] : m_modelFiles) {
+		if (name == "main") playerModels["main"] = "models/main.json";
+		else if (name == "arm") playerModels["arm"] = "models/arm.json";
+	}
+	if (!playerModels.empty()) player["model"] = playerModels;
+
+	json playerAnims = json::object();
+	for (const auto& [name, data] : m_animationFiles) {
+		if (name.find('/') != std::string::npos) continue;
+		if (subEntityModels.count(name)) continue;
+		std::string key = normalizeAnimKey(name);
+		playerAnims[key] = "animations/" + animPathComponent(key) + ".animation.json";
+	}
+	if (!playerAnims.empty()) player["animation"] = playerAnims;
+
+	if (!m_animControllerFiles.empty()) {
+		json ac = json::array();
+		for (const auto& [name, data] : m_animControllerFiles) {
+			ac.push_back("controller/" + name + ".json");
+		}
+		player["animation_controllers"] = ac;
+	}
+
+	json playerTex = json::array();
+	for (const auto& [name, data] : m_textureFiles) {
+		bool isSub = false;
+		for (const auto& sn : subEntityModels) {
+			if (name == sn || name.starts_with(sn + "_")) { isSub = true; break; }
+		}
+		if (isSub) continue;
+		playerTex.push_back({{"uv", "textures/" + name + ".png"}});
+	}
+	if (!playerTex.empty()) player["texture"] = playerTex;
+
+	files["player"] = player;
+
+	// --- Sub-entity sections ---
+	std::map<std::string, std::vector<std::string>> catModels;
+	for (const auto& mn : subEntityModels) {
+		catModels[getCategory(mn)].push_back(mn);
+	}
+
+	for (const auto& [cat, models] : catModels) {
+		json section = json::object();
+		for (const auto& mn : models) {
+			json entry = json::object();
+			entry["model"] = "models/" + mn + ".json";
+
+			for (const auto& [animName, animData] : m_animationFiles) {
+				bool match = false;
+				std::string animPath;
+				if (animName.find('/') != std::string::npos) {
+					auto sp = animName.find('/');
+					if (animName.substr(sp + 1) == mn) {
+						match = true;
+						animPath = "animations/" + animName + ".animation.json";
+					}
+				}
+				else if (animName == mn) {
+					match = true;
+					if (cat == "vehicles")
+						animPath = "animations/vehicle/" + mn + ".animation.json";
+					else
+						animPath = "animations/" + mn + ".animation.json";
+				}
+				if (match) { entry["animation"] = animPath; break; }
+			}
+
+			for (const auto& [texName, texData] : m_textureFiles) {
+				if (texName == mn || texName.starts_with(mn + "_")) {
+					entry["texture"] = "textures/" + mn + ".png";
+					break;
+				}
+			}
+
+			section[mn] = entry;
+		}
+		files[cat] = section;
+	}
+
+	return files;
 }
 
 void YSMParserV3::ParseLegacyYSMInfo(BufferReader& reader)
@@ -1496,37 +1649,6 @@ std::vector<uint8_t> YSMParserV3::ParseAnimations(BufferReader& reader)
 			if (!boneData.empty()) {
 				bonesObj[boneNameValue] = std::move(boneData);
 			}
-
-			//if (false) {
-			//	auto printChannel = [](const std::string& name, const std::optional<BonesKeyFrame>& channel) {
-			//		if (!channel.has_value()) {
-			//			std::cout << "  " << name << ": <nullopt> (无关键帧)" << std::endl;
-			//			return;
-			//		}
-			//		std::cout << "  " << name << ":" << std::endl;
-			//		for (size_t k = 0; k < channel->bone.size(); ++k) {
-			//			const auto& kf_pair = channel->bone[k];
-			//			float time = kf_pair.first;
-			//			const Keyframe& kf = kf_pair.second;
-
-			//			std::cout << "    [" << k << "] Time: " << time << ", Post: " << kf.post;
-			//			if (kf.pre.has_value()) {
-			//				std::cout << ", Pre: " << kf.pre.value();
-			//			}
-			//			// 打印 Lerp 模式 (0:LINEAR, 1:STEP, 2:CATMULLROM)
-			//			std::cout << ", LerpMode: " << static_cast<int>(kf.lerp_mode) << std::endl;
-			//		}
-			//		};
-			//	printChannel("rotation", rotation);
-			//	printChannel("position", position);
-			//	printChannel("scale", scale);
-			//	std::cout << "----------------------------------------" << std::endl;
-			//}
-			//std::cout << "rotation = " << rotation.value_or(MolangPair{ {0.0f, 0.0f, 0.0f} }) << std::endl;
-			//std::cout << "position = " << position.value_or(MolangPair{ {0.0f, 0.0f, 0.0f} }) << std::endl;
-			//std::cout << "r3 = " << r3.value_or(MolangPair{ {0.0f, 0.0f, 0.0f} }) << std::endl;
-			//std::cout << "scale = " << scale.value_or(MolangPair{ {0.0f, 0.0f, 0.0f} }) << std::endl;
-			//std::cout << std::endl;
 		}
 
 		if (!bonesObj.empty()) {
@@ -2013,7 +2135,7 @@ void YSMParserV3::deserializeLegacyV1(BufferReader& reader) {
 		if (it != modelIds.end()) {
 			size_t idx = std::distance(modelIds.begin(), it);
 			if (idx < m_modelFiles.size()) {
-				m_modelFiles[idx].first = modelHash;
+				// m_modelFiles[idx].first = modelHash;
 			}
 		}
 	}
@@ -2038,13 +2160,13 @@ void YSMParserV3::deserializeLegacyV1(BufferReader& reader) {
 		bool matched = false;
 		for (auto& item : m_textureFiles) {
 			if (item.first == textureName) {
-				item.first = textureHash;
+				// item.first = textureHash;
 				matched = true;
 				break;
 			}
 		}
 		if (!matched && i < m_textureFiles.size()) {
-			m_textureFiles[i].first = textureHash;
+			// m_textureFiles[i].first = textureHash;
 		}
 	}
 
@@ -2063,7 +2185,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 		uint32_t modelId = reader.readVarint();
 		modelIds.push_back(modelId);
 		reader.readVarint(); // unk
-		
+
 		auto model = ParseModels(reader);
 
 		std::string modelName;
@@ -2116,6 +2238,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 	uint32_t customTextureCount = reader.readVarint();
 	for (uint32_t i = 0; i < customTextureCount; ++i) {
 		std::string textureName = reader.readString();
+		textureName = sanitizeWindowsFilename(textureName); // 有些模型里面有 '\\' 导致路径问题。
 		std::vector<uint8_t> fileData = reader.readByteSequence();
 		uint32_t width = reader.readVarint();
 		uint32_t height = reader.readVarint();
@@ -2154,7 +2277,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 			std::string soundHash = reader.readString();
 			for (auto& item : m_soundFiles) {
 				if (item.first == soundName) {
-					item.first = soundHash;
+					// item.first = soundHash;
 					break;
 				}
 			}
@@ -2164,6 +2287,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 	uint32_t extraTextureCount = reader.readVarint();
 	for (uint32_t i = 0; i < extraTextureCount; ++i) {
 		std::string textureName = reader.readString();
+		textureName = sanitizeWindowsFilename(textureName);
 		std::vector<uint8_t> fileData = reader.readByteSequence();
 		uint32_t width = reader.readVarint();
 		uint32_t height = reader.readVarint();
@@ -2182,7 +2306,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 		if (it != modelIds.end()) {
 			size_t idx = std::distance(modelIds.begin(), it);
 			if (idx < m_modelFiles.size()) {
-				m_modelFiles[idx].first = modelHash;
+				// m_modelFiles[idx].first = modelHash;
 			}
 		}
 	}
@@ -2208,13 +2332,13 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 		bool matched = false;
 		for (auto& item : m_textureFiles) {
 			if (item.first == textureName) {
-				item.first = textureHash;
+				// item.first = textureHash;
 				matched = true;
 				break;
 			}
 		}
 		if (!matched && i < m_textureFiles.size()) {
-			m_textureFiles[i].first = textureHash;
+			// m_textureFiles[i].first = textureHash;
 		}
 
 		printf("Ready for read 0x%08zX\n", reader.offset);
@@ -2226,7 +2350,7 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 			std::string textureHash = reader.readString();
 
 			if (specialImageIdx < m_specialImageFiles.size()) {
-				m_specialImageFiles[specialImageIdx].first = textureHash;
+				// m_specialImageFiles[specialImageIdx].first = textureHash;
 				specialImageIdx++;
 			}
 		}
@@ -2292,7 +2416,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			{
 				subTextureFiles.push_back({ "normal", basicSubTexture });
 			}
-			else if(specular_type == 2)
+			else if (specular_type == 2)
 			{
 				subTextureFiles.push_back({ "specular", basicSubTexture });
 			}
@@ -2300,7 +2424,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			{
 				throw ParserUnknownField();
 			}
-			
+
 			uint32_t sp_w = reader.readVarint();
 			uint32_t sp_h = reader.readVarint();
 			uint32_t sp_format = reader.readVarint();
@@ -2317,6 +2441,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			printf("  -> SubModule Name (Footer): %s\n", subModuleName.c_str());
 		}
 		if (subModuleName.find("minecraft:") != std::string::npos) subModuleName = subModuleName.substr(subModuleName.find(":") + 1);
+		m_subEntityCategories[subModuleName] = categoryName;
 		m_modelFiles.push_back({ subModuleName, model });
 		for (auto& item : subTextureFiles) {
 			m_textureFiles.push_back({ subModuleName + "_" + item.first, item.second });
@@ -2324,9 +2449,9 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 		m_textureFiles.push_back({ subModuleName, basicTexture });
 		if (hasSubAnim)
 		{
-			m_animationFiles.push_back({ categoryName + "/" + subModuleName, anim});
+			m_animationFiles.push_back({ categoryName + "/" + subModuleName, anim });
 		}
-	};
+		};
 
 	// 2. 开始执行结构化读取
 
@@ -2345,7 +2470,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			uint32_t vehiclesSize = reader.readVarint();
 			printf("\nTotal Vehicles: %u\n", vehiclesSize);
 			for (uint32_t i = 0; i < vehiclesSize; i++) {
-				parseSubEntity(reader, "Vehicle", i);
+				parseSubEntity(reader, "vehicle", i);
 			}
 		}
 
@@ -2354,7 +2479,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			uint32_t projectileSize = reader.readVarint();
 			printf("\nTotal Projectiles: %u\n", projectileSize);
 			for (uint32_t i = 0; i < projectileSize; i++) {
-				parseSubEntity(reader, "Projectile", i);
+				parseSubEntity(reader, "projectiles", i);
 			}
 		}
 	}
@@ -2450,19 +2575,7 @@ void YSMParserV3::parse()
 
 	// Parse Header
 	try {
-		m_hashToFileMap = parseYSGPHeader(header, m_format);
-
-		if (isVerbose()) {
-			std::cout << "\n[HEADER MAP] entries=" << m_hashToFileMap.size() << '\n';
-			for (const auto& pair : m_hashToFileMap) {
-				std::cout << "  |- hash : " << pair.first << '\n';
-				std::cout << "  |- type : " << pair.second.first << '\n';
-				std::cout << "  `- files:\n";
-				for (const auto& file : pair.second.second) {
-					std::cout << "     - " << file << '\n';
-				}
-			}
-		}
+		m_format = extractFormatFromHeader(header);
 	}
 	catch (const std::exception& e) {
 		std::cout << "Parse Failed: " << e.what() << std::endl;
@@ -2539,6 +2652,7 @@ static void saveFile(const std::filesystem::path& filePath, const std::vector<ui
 	}
 	else {
 		std::cerr << "Failed to open file: " << PathUtils::path_to_utf8(filePath) << std::endl;
+		throw ParserPathNotSupported();
 	}
 }
 
@@ -2579,23 +2693,11 @@ void YSMParserV3::saveToDirectory(std::string output_directory)
 
 	auto exportMapped = [&](const std::vector<std::pair<std::string, std::vector<uint8_t>>>& items, const fs::path& defaultFolder, const std::string& extension) {
 		for (const auto& item : items) {
-			auto it = m_hashToFileMap.find(item.first);
-			if (it != m_hashToFileMap.end()) {
-				// We have a mapped file path!
-				for (const auto& targetPathStr : it->second.second) {
-					auto mappedPath = makeOutputPath(PathUtils::utf8_to_path(targetPathStr));
-					saveFile(mappedPath, item.second);
-				}
-				// 消费掉映射，避免不同组件（例如主实体和子实体）各自解析并附带相同资源时，重复触发 1对N 的全量映射导出
-				it->second.second.clear();
-			}
-			else {
-				// Generic save logic fallback
-				auto fallbackPath = makeOutputPath(defaultFolder / PathUtils::utf8_to_path(item.first + extension));
-				saveFile(fallbackPath, item.second);
-			}
+			// Generic save logic fallback
+			auto fallbackPath = makeOutputPath(defaultFolder / PathUtils::utf8_to_path(item.first + extension));
+			saveFile(fallbackPath, item.second);
 		}
-		};
+	};
 
 	exportMapped(m_soundFiles, "sounds", ".ogg");
 	exportMapped(m_functionFiles, "functions", ".molang");

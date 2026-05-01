@@ -182,11 +182,11 @@ unsigned int resolve_worker_count(unsigned int requested_threads, std::size_t ta
 
 void print_big_file_banner(const ConsoleTheme& theme) {
     static const std::vector<std::string> kBanner = {
-        "FFFFFFFF  IIIII  L       EEEEE    IIIII  N   N  FFFFF   OOO  ",
-        "F           I    L       E          I    NN  N  F      O   O ",
-        "FFFFFFFF    I    L       EEEE       I    N N N  FFFF   O   O ",
-        "F           I    L       E          I    N  NN  F      O   O ",
-        "F         IIIII  LLLLLL  EEEEE    IIIII  N   N  F       OOO  "
+        "FFFFF  IIIII  L       EEEEE    IIIII  N   N  FFFFF   OOO  ",
+        "F        I    L       E          I    NN  N  F      O   O ",
+        "FFFF     I    L       EEEE       I    N N N  FFFF   O   O ",
+        "F        I    L       E          I    N  NN  F      O   O ",
+        "F      IIIII  LLLLLL  EEEEE    IIIII  N   N  F       OOO  "
     };
 
     std::cout << '\n';

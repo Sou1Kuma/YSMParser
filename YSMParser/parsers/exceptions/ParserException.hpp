@@ -53,3 +53,14 @@ public:
 };
 
 
+class ParserPathNotSupported : public std::exception {
+public:
+	ParserPathNotSupported() noexcept = default;
+	~ParserPathNotSupported() noexcept override = default;
+	const char* what() const noexcept override
+	{
+		return "Path not supported";
+	}
+};
+
+

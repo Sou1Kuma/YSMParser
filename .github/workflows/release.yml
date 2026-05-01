@@ -69,24 +69,28 @@ jobs:
             artifact_name: YSMParser-windows-x64
             archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-windows-x64
             binary_relpath: out/install/x64-release/YSMParser.exe
+            jni_relpath: out/install/x64-release/YSMParserJNI.dll
           - os: windows-2022
             preset: x86-release
             arch: x86
             artifact_name: YSMParser-windows-x86
             archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-windows-x86
             binary_relpath: out/install/x86-release/YSMParser.exe
+            jni_relpath: out/install/x86-release/YSMParserJNI.dll
           - os: ubuntu-24.04
             preset: linux-release
             arch: x64
             artifact_name: YSMParser-linux-x64
             archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-linux-x64
             binary_relpath: out/install/linux-release/YSMParser
+            jni_relpath: out/install/linux-release/libYSMParserJNI.so
           - os: macos-14
             preset: macos-release
             arch: arm64
             artifact_name: YSMParser-macos-arm64
             archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-macos-arm64
             binary_relpath: out/install/macos-release/YSMParser
+            jni_relpath: out/install/macos-release/libYSMParserJNI.dylib
           - os: ubuntu-24.04
             preset: wasm-release
             arch: wasm32
@@ -103,12 +107,41 @@ jobs:
             binary_relpath: out/install/wasm-web-release/YSMParser.js
             install_dir: out/install/wasm-web-release
             package_web_frontend: 'true'
+          # --- New targets ---
+          - os: ubuntu-24.04-arm
+            preset: linux-arm64-release
+            arch: arm64
+            artifact_name: YSMParser-linux-arm64
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-linux-arm64
+            binary_relpath: out/install/linux-arm64-release/YSMParser
+            jni_relpath: out/install/linux-arm64-release/libYSMParserJNI.so
+          - os: ubuntu-24.04
+            preset: loongarch64-release
+            arch: loongarch64
+            artifact_name: YSMParser-linux-loongarch64
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-linux-loongarch64
+            binary_relpath: out/install/loongarch64-release/YSMParser
+            jni_relpath: ''
+          - os: ubuntu-24.04
+            preset: android-arm64-release
+            arch: android-arm64
+            artifact_name: YSMParser-android-arm64-v8a
+            archive_name: YSMParser-${{ needs.detect-version.outputs.version }}-android-arm64-v8a
+            binary_relpath: ''
+            jni_relpath: out/install/android-arm64-release/libYSMParserJNI.so
+            install_dir: out/install/android-arm64-release
+            package_android: 'true'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Setup Ninja
+        if: matrix.os != 'ubuntu-24.04-arm'
         uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup Ninja (ARM64)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build
 
       - name: Setup Emscripten
         if: matrix.arch == 'wasm32'
@@ -121,6 +154,75 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
+
+      - name: Setup LoongArch64 cross-compiler
+        if: matrix.arch == 'loongarch64'
+        run: |
+          set -euo pipefail
+          # Fetch latest release assets from loongson/build-tools (GitHub-hosted)
+          ASSET_URL=$(curl -fsSL \
+            https://api.github.com/repos/loongson/build-tools/releases/latest \
+            | python3 -c "
+          import sys, json
+          assets = json.load(sys.stdin).get('assets', [])
+          # Prefer Linux-hosted cross-tools; skip Windows-hosted ones
+          for a in assets:
+              name = a['name']
+              if 'cross-tools' not in name: continue
+              if not name.endswith(('.tar.xz', '.tar.gz', '.tgz')): continue
+              if 'Windows' in name or 'windows' in name or 'win32' in name or 'win64' in name:
+                  continue
+              if 'loongarch64' not in name: continue
+              print(a['browser_download_url'])
+              break
+          ")
+          if [[ -z "${ASSET_URL}" ]]; then
+            echo "No suitable Linux-hosted loongarch64 asset found. Available assets:"
+            curl -fsSL https://api.github.com/repos/loongson/build-tools/releases/latest \
+              | python3 -c "import sys,json;[print(' ',a['name']) for a in json.load(sys.stdin).get('assets',[])]"
+            exit 1
+          fi
+          echo "Downloading ${ASSET_URL}"
+          curl -fsSL -o loongarch64-toolchain.tar.xz "${ASSET_URL}"
+          sudo mkdir -p /opt/loongarch64-toolchain
+          sudo tar -xf loongarch64-toolchain.tar.xz -C /opt/loongarch64-toolchain
+
+          # Find the cross-compiler (prefix varies between releases)
+          GCC=$(find /opt/loongarch64-toolchain -name 'loongarch64*-gcc' -type f | head -1)
+          GXX=$(find /opt/loongarch64-toolchain -name 'loongarch64*-g++' -type f | head -1)
+          if [[ -z "${GCC}" || -z "${GXX}" ]]; then
+            echo "Could not find loongarch64 gcc/g++ in toolchain"
+            find /opt/loongarch64-toolchain -name '*-gcc' -type f
+            exit 1
+          fi
+          echo "Found gcc: ${GCC}"
+          echo "Found g++: ${GXX}"
+          "${GXX}" --version
+
+          # Add bin directory to PATH
+          echo "$(dirname "${GCC}")" >> "${GITHUB_PATH}"
+
+          # Rewrite toolchain file with detected compiler paths
+          cat > cmake/toolchains/loongarch64-linux-gnu.cmake << EOF
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR loongarch64)
+          set(CMAKE_C_COMPILER ${GCC})
+          set(CMAKE_CXX_COMPILER ${GXX})
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          EOF
+
+      - name: Setup Android NDK
+        if: matrix.arch == 'android-arm64'
+        run: |
+          set -euo pipefail
+          NDK_VERSION="r27c"
+          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          unzip -q "${NDK_ZIP}"
+          echo "ANDROID_NDK_HOME=${PWD}/android-ndk-${NDK_VERSION}" >> "${GITHUB_ENV}"
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -136,7 +238,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p package
-          cp "${{ matrix.binary_relpath }}" package/
+
+          # Copy CLI binary (if present)
+          if [[ -n "${{ matrix.binary_relpath }}" ]]; then
+            cp "${{ matrix.binary_relpath }}" package/
+          fi
+
+          # Copy JNI library (if present)
+          if [[ -n "${{ matrix.jni_relpath }}" ]]; then
+            cp "${{ matrix.jni_relpath }}" package/
+          fi
+
+          # WASM: copy .wasm file
           if [[ "${{ matrix.arch }}" == "wasm32" ]]; then
             wasm_file="$(find "${{ matrix.install_dir }}" -maxdepth 1 -type f -name '*.wasm' | head -n 1)"
             if [[ -z "$wasm_file" ]]; then
@@ -145,10 +258,28 @@ jobs:
             fi
             cp "$wasm_file" package/
           fi
+
+          # WASM web: include frontend
           if [[ "${{ matrix.package_web_frontend }}" == "true" ]]; then
             cp web/index.html package/
             cp web/app.js package/
           fi
+
+          # Android: compile Java classes and include JAR
+          if [[ "${{ matrix.package_android }}" == "true" ]]; then
+            mkdir -p package/java
+            javac -d package/java java/com/ysm/parser/*.java java/Example.java
+            cd package/java && jar cf ../YSMParserJNI.jar . && cd ../..
+            rm -rf package/java
+
+            # Package .so in ABI-named directory for drop-in use
+            abi_dir="arm64-v8a"
+            mkdir -p "package/${abi_dir}"
+            if [[ -f "package/libYSMParserJNI.so" ]]; then
+              mv "package/libYSMParserJNI.so" "package/${abi_dir}/"
+            fi
+          fi
+
           cp LICENSE.txt package/
           if [[ -f README.md ]]; then
             cp README.md package/

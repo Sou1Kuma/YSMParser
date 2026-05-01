@@ -25,6 +25,7 @@ private:
 
 namespace YSMParserFactory {
 	std::unique_ptr<YSMParser> Create(const std::string& path);
+	std::unique_ptr<YSMParser> Create(const char* data, size_t size);
 }
 
 namespace PathUtils {
