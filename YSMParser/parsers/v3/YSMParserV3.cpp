@@ -2572,7 +2572,7 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 				{
 					m_animControllerFiles.push_back({ categoryName + "/" + subModuleName, subController });
 				}
-
+				
 			}
 			return;
 		}
@@ -2896,3 +2896,4 @@ void YSMParserV3::saveToDirectory(std::string output_directory)
 		saveFile(outPath, item.second);
 	}
 }
+

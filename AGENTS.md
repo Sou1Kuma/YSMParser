@@ -2,7 +2,7 @@
 
 ## Repository expectations
 
-- Use CRLF (preferred windows.)
+- Use CRLF (preferred windows visual studio)
 
 ## Project overview
 
@@ -35,11 +35,10 @@
 
 - `YSMParserFactory::Create()` reads the input file and selects a parser implementation by header/version.
 - V1 parser:
-  - Reads base64 file names.
   - Uses AES-CBC + zlib.
   - Exports resources directly from an in-memory map.
 - V2 parser:
-  - Similar to V1, but derives the real AES key using MD5 + Java-style PRNG before decrypting payloads.
+  - Similar to V1, filename is base64-encoded, but derives the real AES key using MD5 + Java-style PRNG before decrypting payloads.
 - V3 parser is the main complexity center:
   - Parses YSGP header metadata.
   - Verifies file integrity with CityHash.

@@ -1,4 +1,4 @@
-﻿{
+{
     "version": 3,
     "configurePresets": [
         {
@@ -155,6 +155,16 @@
             }
         },
         {
+            "name": "riscv64-release",
+            "displayName": "RISC-V64 Release",
+            "inherits": "unix-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/riscv64-linux-gnu.cmake",
+                "YSM_TARGET_JNI": "OFF"
+            }
+        },
+        {
             "name": "android-arm64-release",
             "displayName": "Android ARM64 Release",
             "generator": "Ninja",
@@ -209,6 +219,10 @@
         {
             "name": "loongarch64-release",
             "configurePreset": "loongarch64-release"
+        },
+        {
+            "name": "riscv64-release",
+            "configurePreset": "riscv64-release"
         },
         {
             "name": "android-arm64-release",

@@ -77,6 +77,7 @@ YSMParser -i input -o output
 - CMake ≥ 3.12
 - C++20 Compiler
 
+
 #### 可执行文件构建
 
 ```bash
@@ -101,6 +102,11 @@ cmake --build --preset wasm-web-release
 
 WASM构建需要EMSDK环境变量指向Emscripten安装目录。
 
+### 贡献
+
+开发时，如果您使用Vibe Coding，请让LLM遵守 AGENTS.md 中的开发约定，特别是关于代码结构和提交规范的部分。
+
+
 ### FAQ
 
 **Q：为什么还原出的模型参数（如长宽高、旋转角、中心点）与我的未加密原文件不同？**
@@ -113,7 +119,7 @@ WASM构建需要EMSDK环境变量指向Emscripten安装目录。
 
 ### 鸣谢
 
-- [TartaricAcid](https://github.com/TartaricAcid): 下载被盗的VMProtect并misconfiguration导致所有关键函数没有被加密并随机按压数字小键盘为[ChatGPT 4o(Free tier)](https://chatgpt.com/)推荐的加密算术输入新的魔数
+- [TartaricAcid](https://github.com/TartaricAcid): 使用VMProtect并misconfiguration导致所有关键函数没有被加密并随机按压数字小键盘为[ChatGPT 4o(Free tier)](https://chatgpt.com/)推荐的加密算术输入新的魔数
 - [Ivan Permyakov](https://vmpsoft.com/): 创建VMProtect
 - [Geoff Pike](https://github.com/google/cityhash): 创建CityHash64
 - Makoto Matsumoto: 创建MT19937_64
@@ -224,6 +230,10 @@ cmake --build --preset wasm-web-release
 
 The WASM build requires the `EMSDK` environment variable to point to the Emscripten installation directory.
 
+### Contributions
+
+During development, if you are using Vibe Coding, please ensure that your LLM adheres to the development conventions outlined in AGENTS.md, particularly the sections regarding code structure and commit guidelines.
+
 ### FAQ
 
 **Q: Why are the restored model parameters, such as dimensions, rotation angles, and pivot points, different from my original unencrypted file?**
@@ -236,7 +246,7 @@ The WASM build requires the `EMSDK` environment variable to point to the Emscrip
 
 ### Acknowledgements
 
-- [TartaricAcid](https://github.com/TartaricAcid): Downloaded a stolen copy of VMProtect, and through misconfiguration left all key functions unencrypted, then randomly pressed the numpad to input new magic constants for encryption arithmetic as recommended by [ChatGPT 4o (Free tier)](https://chatgpt.com/)
+- [TartaricAcid](https://github.com/TartaricAcid): Use VMProtect, and through misconfiguration left all key functions unencrypted, then randomly pressed the numpad to input new magic constants for encryption arithmetic as recommended by [ChatGPT 4o (Free tier)](https://chatgpt.com/)
 - [Ivan Permyakov](https://vmpsoft.com/): Created VMProtect
 - [Geoff Pike](https://github.com/google/cityhash): Created CityHash64
 - Makoto Matsumoto: Created MT19937_64
