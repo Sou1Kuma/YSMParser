@@ -33,7 +33,7 @@ private:
 	void ParseSoundFiles(BufferReader& reader);
 	void ParseFunctionFiles(BufferReader& reader);
 	void ParseLanguageFiles(BufferReader& reader);
-	void ParseAnimationControllers(BufferReader& reader);
+	std::vector<uint8_t> ParseAnimationControllers(BufferReader& reader);
 	void ParseTextureFiles(BufferReader& reader);
 
 	size_t m_size;

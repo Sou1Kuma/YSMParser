@@ -984,7 +984,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			}
 
 			authorObj["comment"] = reader.readString();
-			authorObj["avatar"] = "avatar/" + authorName + ".png";
+			authorObj["avatar"] = "avatar/" + sanitizeWindowsFilename(authorName + ".png");
 			authorsArr.push_back(authorObj);
 		}
 		m_metadata["authors"] = authorsArr;
@@ -1152,7 +1152,6 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			for (uint32_t j = 0; j < avatars; j++) {
 				json avatarInfo = json::object();
 				std::string avatarName = reader.readString();
-				avatarName = sanitizeWindowsFilename(avatarName);
 				avatarInfo["name"] = avatarName;
 
 				std::vector<uint8_t> data(reader.readByteSequence());
@@ -1198,7 +1197,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 				relativePath = gui_background;
 			}
 			else {
-				relativePath = "background/" + name + ".png";
+				relativePath = "background/" + sanitizeWindowsFilename(name + ".png");
 			}
 
 			m_backgroundFiles.push_back({ relativePath, fileData });
@@ -1212,10 +1211,7 @@ void YSMParserV3::ParseYSMJson(BufferReader& reader)
 			uint32_t unk_flag = reader.readVarint();
 			Images::validateImageMetadata(name, reader.offset, image_format, unk_flag);
 		}
-
-
 	}
-
 }
 
 nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
@@ -1250,19 +1246,19 @@ nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
 		auto k = knownSubModels.find(modelName);
 		if (k != knownSubModels.end()) return k->second;
 		return "sub_entities";
-	};
+		};
 
 	auto normalizeAnimKey = [](const std::string& name) -> std::string {
 		if (name == "fp.arm" || name == "fp_arm") return "fp_arm";
 		if (name == "iss" || name == "irons_spell_books") return "irons_spell_books";
 		return name;
-	};
+		};
 
 	auto animPathComponent = [](const std::string& key) -> std::string {
 		if (key == "fp_arm") return "fp.arm";
 		if (key == "irons_spell_books") return "iss";
 		return key;
-	};
+		};
 
 	// --- Player section ---
 	json player = json::object();
@@ -1279,17 +1275,18 @@ nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
 		if (name.find('/') != std::string::npos) continue;
 		if (subEntityModels.count(name)) continue;
 		std::string key = normalizeAnimKey(name);
-		playerAnims[key] = "animations/" + animPathComponent(key) + ".animation.json";
+		playerAnims[key] = "animations/" + sanitizeWindowsFilename(animPathComponent(key) + ".animation.json");
 	}
 	if (!playerAnims.empty()) player["animation"] = playerAnims;
 
-	if (!m_animControllerFiles.empty()) {
-		json ac = json::array();
-		for (const auto& [name, data] : m_animControllerFiles) {
-			ac.push_back("controller/" + name + ".json");
-		}
-		player["animation_controllers"] = ac;
+	json ac1 = json::array();
+	for (const auto& [name, data] : m_animControllerFiles) {
+		if (name.find('/') != std::string::npos) continue;
+		if (subEntityModels.count(name)) continue;
+		std::string key = normalizeAnimKey(name);
+		ac1.push_back("controller/" + sanitizeWindowsFilename(name + ".json"));
 	}
+	player["animation_controllers"] = ac1;
 
 	json playerTex = json::array();
 	for (const auto& [name, data] : m_textureFiles) {
@@ -1298,7 +1295,7 @@ nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
 			if (name == sn || name.starts_with(sn + "_")) { isSub = true; break; }
 		}
 		if (isSub) continue;
-		playerTex.push_back({{"uv", "textures/" + name + ".png"}});
+		playerTex.push_back({ {"uv", "textures/" + sanitizeWindowsFilename(name + ".png")} });
 	}
 	if (!playerTex.empty()) player["texture"] = playerTex;
 
@@ -1314,7 +1311,8 @@ nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
 		json section = json::object();
 		for (const auto& mn : models) {
 			json entry = json::object();
-			entry["model"] = "models/" + mn + ".json";
+
+			entry["model"] = "models/" + sanitizeWindowsFilename(mn + ".json");
 
 			for (const auto& [animName, animData] : m_animationFiles) {
 				bool match = false;
@@ -1323,22 +1321,46 @@ nlohmann::ordered_json YSMParserV3::buildFilesFromParsedData() {
 					auto sp = animName.find('/');
 					if (animName.substr(sp + 1) == mn) {
 						match = true;
-						animPath = "animations/" + animName + ".animation.json";
+						std::string catPrefix = animName.substr(0, sp + 1);
+						std::string baseName = animName.substr(sp + 1);
+						animPath = "animations/" + catPrefix + sanitizeWindowsFilename(baseName + ".animation.json");
 					}
 				}
 				else if (animName == mn) {
 					match = true;
 					if (cat == "vehicles")
-						animPath = "animations/vehicle/" + mn + ".animation.json";
+						animPath = "animations/vehicle/" + sanitizeWindowsFilename(mn + ".animation.json");
 					else
-						animPath = "animations/" + mn + ".animation.json";
+						animPath = "animations/" + sanitizeWindowsFilename(mn + ".animation.json");
 				}
 				if (match) { entry["animation"] = animPath; break; }
 			}
 
+			for (const auto& [animName, animData] : m_animControllerFiles) {
+				bool match = false;
+				std::string animPath;
+				if (animName.find('/') != std::string::npos) {
+					auto sp = animName.find('/');
+					if (animName.substr(sp + 1) == mn) {
+						match = true;
+						std::string catPrefix = animName.substr(0, sp + 1);
+						std::string baseName = animName.substr(sp + 1);
+						animPath = "controller/" + catPrefix + sanitizeWindowsFilename(baseName + ".json");
+					}
+				}
+				else if (animName == mn) {
+					match = true;
+					if (cat == "vehicles")
+						animPath = "controller/vehicle/" + sanitizeWindowsFilename(mn + ".json");
+					else
+						animPath = "controller/" + sanitizeWindowsFilename(mn + ".json");
+				}
+				if (match) { entry["controller"] = animPath; break; }
+			}
+
 			for (const auto& [texName, texData] : m_textureFiles) {
 				if (texName == mn || texName.starts_with(mn + "_")) {
-					entry["texture"] = "textures/" + mn + ".png";
+					entry["texture"] = "textures/" + sanitizeWindowsFilename(mn + ".png");
 					break;
 				}
 			}
@@ -1469,6 +1491,10 @@ std::vector<uint8_t> YSMParserV3::ParseAnimations(BufferReader& reader)
 	std::string hash;
 	if (m_format > 15) {
 		hash = reader.readString();
+		if (hash[0] == '\x01')
+		{
+			std::cout << 1;
+		}
 	}
 	uint32_t animCount = reader.readVarint();
 	for (uint32_t anim = 0; anim < animCount; ++anim) {
@@ -1495,10 +1521,23 @@ std::vector<uint8_t> YSMParserV3::ParseAnimations(BufferReader& reader)
 		if (m_format > 9) {
 			// 这里还有4个 00，可能是未知的类型标识，暂时跳过
 			// printf("run 1\n");
-			uint32_t unkint1 = reader.readVarint(); if (unkint1 != 0) { printf("unkint: 0x%08zX\n", reader.offset); throw ParserUnknownField(); }
+			if (reader.seeByte() != 0)
+			{
+				std::cout << 1;
+			}
+			std::string unkField1 = reader.readString();
+			if (!unkField1.empty())
+			{
+				//reader.offset += 7;
+			}
 			// 这里还有4个 00，可能是未知的类型标识，暂时跳过
 			// printf("run 2\n");
-			uint32_t unkint2 = reader.readVarint(); if (unkint2 != 0) { printf("unkint: 0x%08zX\n", reader.offset); throw ParserUnknownField(); }
+			std::string unkField2 = reader.readString();
+			if (!unkField2.empty())
+			{
+				reader.offset += 7;
+			}
+
 
 			// blend_weight
 			uint32_t blend_weightMolangs = reader.readVarint();
@@ -1702,7 +1741,7 @@ std::vector<uint8_t> YSMParserV3::ParseAnimations(BufferReader& reader)
 		root["animations"] = animationsDesc;
 	}
 
-	std::string debugJson = root.dump(4, ' ', false);
+	std::string debugJson = root.dump(-1);
 	std::vector<uint8_t> animData(debugJson.begin(), debugJson.end());
 	return animData;
 }
@@ -1766,7 +1805,7 @@ void YSMParserV3::ParseLanguageFiles(BufferReader& reader)
 	}
 }
 
-void YSMParserV3::ParseAnimationControllers(BufferReader& reader)
+std::vector<uint8_t> YSMParserV3::ParseAnimationControllers(BufferReader& reader)
 {
 	auto log_controller_header = [&](const std::string& controllerName, const std::string& animName, uint32_t statesCount, const std::string& initialState) {
 		if (!isVerbose()) {
@@ -1819,191 +1858,177 @@ void YSMParserV3::ParseAnimationControllers(BufferReader& reader)
 			}
 		};
 
-	uint32_t cnt = reader.readVarint();
+
+	using namespace nlohmann;
+	// 创建根 JSON 对象
+	json root = json::object();
+	root["format_version"] = "1.19.0";
 
 
-	for (uint32_t i = 0; i < cnt; i++)
-	{
-		using namespace nlohmann;
-		// 创建根 JSON 对象
-		json root = json::object();
-		root["format_version"] = "1.19.0";
 
-		// 全局控制器的名称和 hash
-		std::string controllerName;
-		std::string hash;
-		if (m_format <= 15) {
-			controllerName = "controller";
-			reader.readVarint();
+	json controllers = json::object();
+
+	// 读取控制器数量
+	uint32_t animCount = reader.readVarint();
+	for (uint32_t anim = 0; anim < animCount; ++anim) {
+		std::string animName = reader.readString();
+		json controllerData = json::object();
+
+		// 读取 initial_state (可能为空)
+		std::string initialState = reader.readString();
+		if (!initialState.empty()) {
+			controllerData["initial_state"] = initialState;
 		}
-		else {
-			controllerName = reader.readString();
-			hash = reader.readString();
-		}
 
-		json controllers = json::object();
+		json statesData = json::object();
+		uint32_t statesCount = reader.readVarint();
+		// log_controller_header(controllerName, animName, statesCount, initialState);
+		//printf("statesCount=%i, 0x%08zX\n", statesCount, reader.offset);
 
-		// 读取控制器数量
-		uint32_t animCount = reader.readVarint();
-		for (uint32_t anim = 0; anim < animCount; ++anim) {
-			std::string animName = reader.readString();
-			json controllerData = json::object();
+		for (uint32_t i = 0; i < statesCount; i++) {
+			std::string stateName = reader.readString(); // 例如 "default", "挥剑1"
+			//printf("stateName=%s, 0x%08zX\n", stateName.c_str(), reader.offset);
+			json stateObj = json::object();
+			json debugAnimations = json::array();
+			json debugTransitions = json::array();
+			json debugOnEntry = json::array();
+			json debugOnExit = json::array();
+			json debugBlendTransitions = json::object();
+			std::optional<float> debugBlendValue;
+			bool debugShortestPath = false;
 
-			// 读取 initial_state (可能为空)
-			std::string initialState = reader.readString();
-			if (!initialState.empty()) {
-				controllerData["initial_state"] = initialState;
+			// 1. 解析 Animations
+			uint32_t animationsSize = reader.readVarint();
+			//printf("animationsSize=%i, 0x%08zX\n", animationsSize, reader.offset);
+			if (animationsSize > 0) {
+				json animArray = json::array();
+				for (uint32_t j = 0; j < animationsSize; j++) {
+					std::string ak = reader.readString();
+					std::string av = reader.readString();
+					//printf("ak=%s, av=%s, 0x%08zX\n", ak.c_str(), av.c_str(), reader.offset);
+					if (av.empty()) {
+						animArray.push_back(ak);
+					}
+					else {
+						json animItem = json::object();
+						animItem[ak] = av;
+						animArray.push_back(animItem);
+					}
+				}
+				debugAnimations = animArray;
+				stateObj["animations"] = animArray;
 			}
 
-			json statesData = json::object();
-			uint32_t statesCount = reader.readVarint();
-			log_controller_header(controllerName, animName, statesCount, initialState);
-			//printf("statesCount=%i, 0x%08zX\n", statesCount, reader.offset);
+			//  Transitions
+			uint32_t transitionsSize = reader.readVarint();
+			if (transitionsSize > 0) {
+				json transArray = json::array();
+				for (uint32_t j = 0; j < transitionsSize; j++) {
+					std::string tk = reader.readString();
+					std::string tv = reader.readString();
 
-			for (uint32_t i = 0; i < statesCount; i++) {
-				std::string stateName = reader.readString(); // 例如 "default", "挥剑1"
-				//printf("stateName=%s, 0x%08zX\n", stateName.c_str(), reader.offset);
-				json stateObj = json::object();
-				json debugAnimations = json::array();
-				json debugTransitions = json::array();
-				json debugOnEntry = json::array();
-				json debugOnExit = json::array();
-				json debugBlendTransitions = json::object();
-				std::optional<float> debugBlendValue;
-				bool debugShortestPath = false;
-
-				// 1. 解析 Animations
-				uint32_t animationsSize = reader.readVarint();
-				//printf("animationsSize=%i, 0x%08zX\n", animationsSize, reader.offset);
-				if (animationsSize > 0) {
-					json animArray = json::array();
-					for (uint32_t j = 0; j < animationsSize; j++) {
-						std::string ak = reader.readString();
-						std::string av = reader.readString();
-						//printf("ak=%s, av=%s, 0x%08zX\n", ak.c_str(), av.c_str(), reader.offset);
-						if (av.empty()) {
-							animArray.push_back(ak);
-						}
-						else {
-							json animItem = json::object();
-							animItem[ak] = av;
-							animArray.push_back(animItem);
-						}
-					}
-					debugAnimations = animArray;
-					stateObj["animations"] = animArray;
+					json transItem = json::object();
+					transItem[tk] = tv;
+					transArray.push_back(transItem);
 				}
-
-				//  Transitions
-				uint32_t transitionsSize = reader.readVarint();
-				if (transitionsSize > 0) {
-					json transArray = json::array();
-					for (uint32_t j = 0; j < transitionsSize; j++) {
-						std::string tk = reader.readString();
-						std::string tv = reader.readString();
-
-						json transItem = json::object();
-						transItem[tk] = tv;
-						transArray.push_back(transItem);
-					}
-					debugTransitions = transArray;
-					stateObj["transitions"] = transArray;
-				}
-
-				printf("unk flag1 at: 0x%08zX\n", reader.offset);
-				// on_entry
-				uint32_t onEntryCount = reader.readVarint();
-				if (onEntryCount > 0) {
-					json entryArray = json::array();
-					for (uint32_t j = 0; j < onEntryCount; j++) {
-						entryArray.push_back(reader.readString());
-					}
-					debugOnEntry = entryArray;
-					stateObj["on_entry"] = entryArray;
-				}
-
-				//  on_exit
-				uint32_t onExitCount = reader.readVarint();
-				if (onExitCount > 0) {
-					json exitArray = json::array();
-					for (uint32_t j = 0; j < onExitCount; j++) {
-						exitArray.push_back(reader.readString());
-					}
-					stateObj["on_exit"] = exitArray;
-					debugOnExit = exitArray;
-				}
-
-				// blend_transitions
-				if (reader.readVarint() != 0) {
-					float blendVal = reader.readFloat();
-					stateObj["blend_transition"] = blendVal;
-					debugBlendValue = blendVal;
-				}
-				else {
-					uint32_t blend_transitions_count = reader.readVarint();
-					if (blend_transitions_count > 0) {
-						json blendObj = json::object();
-						for (uint32_t j = 0; j < blend_transitions_count; j++) {
-							float bk = reader.readFloat();
-							float bv = reader.readFloat();
-							// 因为 JSON 对象键只能是字符串，所以将 float 转换为 string
-							blendObj[std::to_string(bk)] = bv;
-						}
-						debugBlendTransitions = blendObj;
-						stateObj["blend_transitions"] = blendObj;
-					}
-				}
-
-				// 6. 解析 blend_via_shortest_path
-				if (reader.readVarint() != 0) {
-					stateObj["blend_via_shortest_path"] = true;
-					debugShortestPath = true;
-				}
-
-
-				//// VERSION==26不存在，>=28存在，解析 sound_effects
-				if (m_format > 26) {
-					uint32_t soundEffectsCount = reader.readVarint();
-					if (soundEffectsCount > 0) {
-						json soundEffectsArray = json::array();
-						for (uint32_t j = 0; j < soundEffectsCount; j++) {
-							std::string effectName = reader.readString();
-							json effectItem = json::object();
-							effectItem["effect"] = effectName;
-							soundEffectsArray.push_back(effectItem);
-						}
-						stateObj["sound_effects"] = soundEffectsArray;
-					}
-				}
-
-
-
-
-				printf("end at: 0x%08zX\n", reader.offset);
-				log_state_block(stateName,
-					debugAnimations.empty() ? nullptr : &debugAnimations,
-					debugTransitions.empty() ? nullptr : &debugTransitions,
-					debugOnEntry.empty() ? nullptr : &debugOnEntry,
-					debugOnExit.empty() ? nullptr : &debugOnExit,
-					debugBlendValue,
-					debugBlendTransitions.empty() ? nullptr : &debugBlendTransitions,
-					debugShortestPath);
-
-				// 将当前 state 添加到 states 列表
-				statesData[stateName] = stateObj;
+				debugTransitions = transArray;
+				stateObj["transitions"] = transArray;
 			}
 
-			// 挂载 states 并存入 controller 列表
-			controllerData["states"] = statesData;
-			controllers[animName] = controllerData;
+			printf("unk flag1 at: 0x%08zX\n", reader.offset);
+			// on_entry
+			uint32_t onEntryCount = reader.readVarint();
+			if (onEntryCount > 0) {
+				json entryArray = json::array();
+				for (uint32_t j = 0; j < onEntryCount; j++) {
+					entryArray.push_back(reader.readString());
+				}
+				debugOnEntry = entryArray;
+				stateObj["on_entry"] = entryArray;
+			}
+
+			//  on_exit
+			uint32_t onExitCount = reader.readVarint();
+			if (onExitCount > 0) {
+				json exitArray = json::array();
+				for (uint32_t j = 0; j < onExitCount; j++) {
+					exitArray.push_back(reader.readString());
+				}
+				stateObj["on_exit"] = exitArray;
+				debugOnExit = exitArray;
+			}
+
+			// blend_transitions
+			if (reader.readVarint() != 0) {
+				float blendVal = reader.readFloat();
+				stateObj["blend_transition"] = blendVal;
+				debugBlendValue = blendVal;
+			}
+			else {
+				uint32_t blend_transitions_count = reader.readVarint();
+				if (blend_transitions_count > 0) {
+					json blendObj = json::object();
+					for (uint32_t j = 0; j < blend_transitions_count; j++) {
+						float bk = reader.readFloat();
+						float bv = reader.readFloat();
+						// 因为 JSON 对象键只能是字符串，所以将 float 转换为 string
+						blendObj[std::to_string(bk)] = bv;
+					}
+					debugBlendTransitions = blendObj;
+					stateObj["blend_transitions"] = blendObj;
+				}
+			}
+
+			// 6. 解析 blend_via_shortest_path
+			if (reader.readVarint() != 0) {
+				stateObj["blend_via_shortest_path"] = true;
+				debugShortestPath = true;
+			}
+
+
+			//// VERSION==26不存在，>=28存在，解析 sound_effects
+			if (m_format > 26) {
+				uint32_t soundEffectsCount = reader.readVarint();
+				if (soundEffectsCount > 0) {
+					json soundEffectsArray = json::array();
+					for (uint32_t j = 0; j < soundEffectsCount; j++) {
+						std::string effectName = reader.readString();
+						json effectItem = json::object();
+						effectItem["effect"] = effectName;
+						soundEffectsArray.push_back(effectItem);
+					}
+					stateObj["sound_effects"] = soundEffectsArray;
+				}
+			}
+
+
+
+
+			printf("end at: 0x%08zX\n", reader.offset);
+			log_state_block(stateName,
+				debugAnimations.empty() ? nullptr : &debugAnimations,
+				debugTransitions.empty() ? nullptr : &debugTransitions,
+				debugOnEntry.empty() ? nullptr : &debugOnEntry,
+				debugOnExit.empty() ? nullptr : &debugOnExit,
+				debugBlendValue,
+				debugBlendTransitions.empty() ? nullptr : &debugBlendTransitions,
+				debugShortestPath);
+
+			// 将当前 state 添加到 states 列表
+			statesData[stateName] = stateObj;
 		}
 
-		root["animation_controllers"] = controllers;
-
-		std::string result = root.dump(4, ' ', false);
-		std::vector<uint8_t> data(result.begin(), result.end());
-		m_animControllerFiles.push_back({ controllerName, data });
+		// 挂载 states 并存入 controller 列表
+		controllerData["states"] = statesData;
+		controllers[animName] = controllerData;
 	}
+
+	root["animation_controllers"] = controllers;
+
+	std::string result = root.dump(4, ' ', false);
+	std::vector<uint8_t> data(result.begin(), result.end());
+
+	return data;
 }
 
 void YSMParserV3::ParseTextureFiles(BufferReader& reader)
@@ -2109,6 +2134,9 @@ void YSMParserV3::deserializeLegacyV1(BufferReader& reader) {
 	for (uint32_t i = 0; i < customTextureCount; ++i) {
 		std::string textureName = reader.readString();
 		printf("texture %s at 0x%08zX\n", textureName.c_str(), reader.offset);
+		if (textureName == "/ARROW\\") {
+			textureName = "arrow";
+		}
 
 		if (m_format < 4) {
 			uint32_t unkk = reader.readVarint(); if (unkk != 0x01) throw ParserUnknownField();
@@ -2222,7 +2250,23 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 	if (m_format > 9) {
 		printf("start Controllers 0x%08zX\n", reader.offset);
 
-		ParseAnimationControllers(reader);
+		uint32_t animControllerCount = reader.readVarint();
+		for (uint32_t i = 0; i < animControllerCount; i++)
+		{
+			// 全局控制器的名称和 hash
+			std::string controllerName;
+			std::string hash;
+			if (m_format <= 15) {
+				controllerName = "controller";
+				reader.readVarint();
+			}
+			else {
+				controllerName = reader.readString();
+				hash = reader.readString();
+			}
+			auto animController = ParseAnimationControllers(reader);
+			m_animControllerFiles.push_back({ controllerName, animController });
+		}
 
 		uint32_t animationControllerTableSize = reader.readVarint();
 		for (uint32_t i = 0; i < animationControllerTableSize; ++i) {
@@ -2238,7 +2282,9 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 	uint32_t customTextureCount = reader.readVarint();
 	for (uint32_t i = 0; i < customTextureCount; ++i) {
 		std::string textureName = reader.readString();
-		textureName = sanitizeWindowsFilename(textureName); // 有些模型里面有 '\\' 导致路径问题。
+		if (textureName == "/ARROW\\") {
+			textureName = "arrow";
+		}
 		std::vector<uint8_t> fileData = reader.readByteSequence();
 		uint32_t width = reader.readVarint();
 		uint32_t height = reader.readVarint();
@@ -2287,7 +2333,6 @@ void YSMParserV3::deserializeLegacyV15(BufferReader& reader) {
 	uint32_t extraTextureCount = reader.readVarint();
 	for (uint32_t i = 0; i < extraTextureCount; ++i) {
 		std::string textureName = reader.readString();
-		textureName = sanitizeWindowsFilename(textureName);
 		std::vector<uint8_t> fileData = reader.readByteSequence();
 		uint32_t width = reader.readVarint();
 		uint32_t height = reader.readVarint();
@@ -2393,21 +2438,26 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			anim = ParseAnimations(reader);
 		}
 
-		// 动画结束后的分隔符 (通常是 0x00)
-		uint32_t sep = reader.readVarint();
-		if (sep != 0) {
-			throw ParserUnknownField();
+		// 子模型Controller
+		bool hasSubController = reader.readVarint();
+		std::vector<std::pair<std::string, std::vector<uint8_t>>> subTextureFiles;
+		std::vector<uint8_t> basicTexture, subController;
+		if (hasSubController)
+		{
+			std::string controllerHash = reader.readString();
+			// Single Controller
+			subController = ParseAnimationControllers(reader);
 		}
 
 		// 2. 解析基础 UV 纹理
-		auto basicTexture = ParseSpecialImage(reader);
+		basicTexture = ParseSpecialImage(reader);
 		uint32_t uv_w = reader.readVarint();
 		uint32_t uv_h = reader.readVarint();
 		uint32_t uv_format = reader.readVarint();
 		uint32_t uv_unk2 = reader.readVarint(); // 通常是 1
 
 		// 子纹理大小
-		std::vector<std::pair<std::string, std::vector<uint8_t>>> subTextureFiles;
+
 		uint32_t subTextureSize = reader.readVarint();
 		for (uint32_t i = 0; i < subTextureSize; i++) {
 			uint32_t specular_type = reader.readVarint(); // 1为NORMAL，2为高光(spec)
@@ -2431,14 +2481,36 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 			uint32_t sp_unk2 = reader.readVarint();
 		}
 
+
 		// 4. 解析几何模型
 		auto model = ParseModels(reader);
 
 		// 5. 解析实体尾部数据
 		if (m_format > 26) {
-			uint32_t footerFlag = reader.readVarint(); // 通常是 0x01
-			subModuleName = reader.readString();
-			printf("  -> SubModule Name (Footer): %s\n", subModuleName.c_str());
+			// 多种submodels处理
+			uint32_t subModels = reader.readVarint();
+			for (uint32_t j = 0; j < subModels; j++)
+			{
+				subModuleName = reader.readString();
+				printf("  -> SubModule Name (Footer): %s\n", subModuleName.c_str());
+				if (subModuleName.find("minecraft:") != std::string::npos) subModuleName = subModuleName.substr(subModuleName.find(":") + 1);
+				m_subEntityCategories[subModuleName] = categoryName;
+				m_modelFiles.push_back({ subModuleName, model });
+				for (auto& item : subTextureFiles) {
+					m_textureFiles.push_back({ subModuleName + "_" + item.first, item.second });
+				}
+				m_textureFiles.push_back({ subModuleName, basicTexture });
+				if (hasSubAnim)
+				{
+					m_animationFiles.push_back({ categoryName + "/" + subModuleName, anim });
+				}
+				if (hasSubController)
+				{
+					m_animControllerFiles.push_back({ categoryName + "/" + subModuleName, subController });
+				}
+				
+			}
+			return;
 		}
 		if (subModuleName.find("minecraft:") != std::string::npos) subModuleName = subModuleName.substr(subModuleName.find(":") + 1);
 		m_subEntityCategories[subModuleName] = categoryName;
@@ -2451,6 +2523,11 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 		{
 			m_animationFiles.push_back({ categoryName + "/" + subModuleName, anim });
 		}
+		if (hasSubController)
+		{
+			m_animControllerFiles.push_back({ categoryName + "/" + subModuleName, subController });
+		}
+
 		};
 
 	// 2. 开始执行结构化读取
@@ -2509,7 +2586,23 @@ void YSMParserV3::deserializeModern(BufferReader& reader) {
 	}
 
 	// animations-controller
-	ParseAnimationControllers(reader);
+	uint32_t animControllerCount = reader.readVarint();
+	for (uint32_t i = 0; i < animControllerCount; i++)
+	{
+		// 全局控制器的名称和 hash
+		std::string controllerName;
+		std::string hash;
+		if (m_format <= 15) {
+			controllerName = "controller";
+			reader.readVarint();
+		}
+		else {
+			controllerName = reader.readString();
+			hash = reader.readString();
+		}
+		auto animController = ParseAnimationControllers(reader);
+		m_animControllerFiles.push_back({ controllerName, animController });
+	}
 
 	// Textures
 	ParseTextureFiles(reader);
@@ -2677,7 +2770,6 @@ void YSMParserV3::saveToDirectory(std::string output_directory)
 		return dirPath / resolveRelativePath(relativePath);
 		};
 
-	//saveFile(dirPath / "decrypted.bin", m_decompressed);
 	if (useLegacyRootLayout) {
 		if (!m_infoJsonFile.empty()) {
 			saveFile(dirPath / "info.json", m_infoJsonFile);
@@ -2695,11 +2787,20 @@ void YSMParserV3::saveToDirectory(std::string output_directory)
 
 	auto exportMapped = [&](const std::vector<std::pair<std::string, std::vector<uint8_t>>>& items, const fs::path& defaultFolder, const std::string& extension) {
 		for (const auto& item : items) {
-			// Generic save logic fallback
-			auto fallbackPath = makeOutputPath(defaultFolder / PathUtils::utf8_to_path(item.first + extension));
+			std::string rawPath = item.first;
+
+			if (!rawPath.ends_with(extension)) {
+				rawPath += extension;
+			}
+
+			fs::path p(PathUtils::utf8_to_path(rawPath));
+			std::string safeFilename = sanitizeWindowsFilename(PathUtils::path_to_utf8(p.filename()));
+			fs::path safeRelativePath = p.parent_path() / PathUtils::utf8_to_path(safeFilename);
+
+			auto fallbackPath = makeOutputPath(defaultFolder / safeRelativePath);
 			saveFile(fallbackPath, item.second);
 		}
-	};
+		};
 
 	exportMapped(m_soundFiles, "sounds", ".ogg");
 	exportMapped(m_functionFiles, "functions", ".molang");
@@ -2711,20 +2812,24 @@ void YSMParserV3::saveToDirectory(std::string output_directory)
 	exportMapped(m_specialImageFiles, "textures", ".png");
 
 	for (auto it = m_avatarFiles.begin(); it != m_avatarFiles.end(); ++it) {
-		fs::path outPath = makeOutputPath(fs::path("avatar") / PathUtils::utf8_to_path(it->first + ".png"));
+		std::string safeFilename = sanitizeWindowsFilename(it->first + ".png");
+		fs::path outPath = makeOutputPath(fs::path("avatar") / PathUtils::utf8_to_path(safeFilename));
 		saveFile(outPath, it->second);
 	}
 
 	for (const auto& item : m_backgroundFiles) {
 		std::string relativePath = item.first;
 
-		fs::path outPath = makeOutputPath(PathUtils::utf8_to_path(relativePath));
-		if (!outPath.has_extension()) {
-			outPath += ".png";
+		if (!PathUtils::utf8_to_path(relativePath).has_extension()) {
+			relativePath += ".png";
 		}
 
+		fs::path p(PathUtils::utf8_to_path(relativePath));
+		std::string safeFilename = sanitizeWindowsFilename(PathUtils::path_to_utf8(p.filename()));
+		fs::path safeRelativePath = p.parent_path() / PathUtils::utf8_to_path(safeFilename);
+
+		fs::path outPath = makeOutputPath(safeRelativePath);
 		saveFile(outPath, item.second);
 	}
-
 }
 
